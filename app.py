@@ -10,12 +10,34 @@ load_dotenv()
 # Page Configuration
 st.set_page_config(page_title="Smart Research Assistant", page_icon="🤖", layout="centered")
 
-# Custom Styling
+# Custom Styling & Fixed Bottom Footer
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
     .stTextInput textarea { color: #ffffff; }
+    
+    /* Move chat input up slightly to make room for footer */
+    [data-testid="stChatInput"] {
+        bottom: 35px !important;
+    }
+    
+    /* Sticky footer styling at the absolute bottom */
+    .custom-footer {
+        position: fixed;
+        left: 0;
+        bottom: 8px;
+        width: 100%;
+        text-align: center;
+        color: #888888;
+        font-size: 13px;
+        z-index: 99999;
+        background-color: transparent;
+    }
     </style>
+    
+    <div class="custom-footer">
+        Powered by Aqsa Rana
+    </div>
 """, unsafe_allow_html=True)
 
 st.title("🧠 Smart Research Assistant")
