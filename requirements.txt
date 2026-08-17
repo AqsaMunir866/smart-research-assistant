@@ -1,6 +1,8 @@
 streamlit
 python-dotenv
-langchain-groq
-langchain-tavily
+langchain
 langchain-core
+langchain-community
+langchain-groq
+tavily-python
 reportlab
