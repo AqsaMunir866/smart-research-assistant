@@ -133,14 +133,16 @@ st.markdown("""
 
 # Initialize LLM & Tool
 @st.cache_resource
+@st.cache_resource
 def load_assistant():
-    groq_key = os.getenv("GROQ_API_KEY")
-    tavily_key = os.getenv("TAVILY_API_KEY")
+    # Retrieve secrets safely from either Streamlit Cloud or local .env
+    groq_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+    tavily_key = st.secrets.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY")
 
     if not groq_key:
-        st.error("❌ GROQ_API_KEY is missing from .env file!")
+        st.error("❌ GROQ_API_KEY is missing!")
     if not tavily_key:
-        st.error("❌ TAVILY_API_KEY is missing from .env file!")
+        st.error("❌ TAVILY_API_KEY is missing!")
 
     llm = ChatGroq(
         model="llama-3.3-70b-versatile",
@@ -149,8 +151,6 @@ def load_assistant():
     )
     search_tool = TavilySearch(max_results=3)
     return llm.bind_tools([search_tool]), search_tool, llm
-
-llm_with_tools, search_tool, llm = load_assistant()
 
 # ==========================================
 # JSON PERSISTENCE HELPERS
