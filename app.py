@@ -2,19 +2,58 @@ import os
 import json
 import streamlit as st
 from dotenv import load_dotenv
+
+# Execute load_dotenv() FIRST before reading environment variables
+load_dotenv()
+
 from langchain_groq import ChatGroq
-from langchain_tavily import TavilySearch
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_community.tools import TavilySearchResults
 
 # Import your PDF generator function
 from pdf_generator import generate_pdf_report
 
-load_dotenv()
+# Safe secret retrieval helper function
+def get_secret_key(key_name):
+    val = os.getenv(key_name)
+    if val:
+        return val
+    try:
+        return st.secrets.get(key_name)
+    except Exception:
+        return None
 
-# Ensure Tavily key is in OS environment
-tavily_key = os.getenv("TAVILY_API_KEY")
-if tavily_key:
-    os.environ["TAVILY_API_KEY"] = tavily_key
+# Cached function to instantiate model & tools
+@st.cache_resource
+def get_assistant_components():
+    groq_key = get_secret_key("GROQ_API_KEY")
+    tavily_key = get_secret_key("TAVILY_API_KEY")
+
+    if not groq_key or not tavily_key:
+        st.error("⚠️ API Keys are missing! Please check your Streamlit Secrets or local .env file.")
+
+    llm = ChatGroq(
+        model="qwen/qwen3.6-27b",
+        temperature=0,
+        groq_api_key=groq_key
+    )
+
+    search_tool = TavilySearchResults(
+        max_results=3,
+        tavily_api_key=tavily_key
+    )
+
+    llm_with_tools = llm.bind_tools([search_tool])
+
+    return llm_with_tools, search_tool, llm
+
+# Global initialization
+llm_with_tools, search_tool, llm = get_assistant_components()
+
+# Sync Tavily Key to OS environment for LangChain internal tool access
+tavily_key_env = get_secret_key("TAVILY_API_KEY")
+if tavily_key_env:
+    os.environ["TAVILY_API_KEY"] = tavily_key_env
 
 # Page Configuration
 st.set_page_config(page_title="Smart Research Assistant", page_icon="🤖", layout="centered")
@@ -23,8 +62,6 @@ st.set_page_config(page_title="Smart Research Assistant", page_icon="🤖", layo
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    
-    /* Sticky footer styling */
     .custom-footer {
         position: fixed;
         left: 0;
@@ -36,13 +73,7 @@ st.markdown("""
         z-index: 99999;
         background-color: transparent;
     }
-
-    /* Move chat input up slightly for footer */
-    [data-testid="stChatInput"] {
-        bottom: 35px !important;
-    }
-
-    /* Custom CSS to turn bulky sidebar buttons into sleek text list items */
+    [data-testid="stChatInput"] { bottom: 35px !important; }
     div[data-testid="stSidebar"] div.stButton > button {
         border: none !important;
         background-color: transparent !important;
@@ -55,36 +86,22 @@ st.markdown("""
         border-radius: 6px !important;
         width: 100% !important;
         box-shadow: none !important;
-        transition: background-color 0.2s ease, color 0.2s ease;
     }
-
-    /* Hover effect for history items */
     div[data-testid="stSidebar"] div.stButton > button:hover {
         background-color: #21262d !important;
         color: #ffffff !important;
     }
-
-    /* Highlight active chat session */
     div[data-testid="stSidebar"] div.stButton > button:disabled {
         background-color: #1f2937 !important;
         color: #60a5fa !important;
         opacity: 1 !important;
     }
-
-    /* Compact styling for the popover (⚙️) dropdown menu */
     div[data-testid="stSidebar"] div[data-testid="stPopover"] > button {
         border: none !important;
         background-color: transparent !important;
         color: #8b949e !important;
         padding: 2px 6px !important;
-        box-shadow: none !important;
     }
-    div[data-testid="stSidebar"] div[data-testid="stPopover"] > button:hover {
-        color: #ffffff !important;
-        background-color: #21262d !important;
-    }
-
-    /* Tight, fixed-size popover context menu */
     div[data-testid="stPopoverBody"] {
         padding: 8px !important;
         max-width: 180px !important;
@@ -92,69 +109,18 @@ st.markdown("""
         overflow: hidden !important;
         border-radius: 8px !important;
     }
-
-    div[data-testid="stPopoverBody"] [data-testid="stVerticalBlock"] {
-        gap: 4px !important;
-    }
-
-    /* Compact input field */
-    div[data-testid="stPopoverBody"] input {
-        font-size: 11px !important;
-        padding: 2px 6px !important;
-        height: 28px !important;
-        border-radius: 4px !important;
-    }
-
-    /* Compact buttons inside menu */
-    div[data-testid="stPopoverBody"] button {
-        font-size: 11px !important;
-        padding: 2px 6px !important;
-        min-height: 26px !important;
-        height: 26px !important;
-        border-radius: 4px !important;
-        line-height: 1 !important;
-        margin: 0 !important;
-    }
-
     blockquote {
         border-left: 4px solid #2563EB !important;
         background-color: #1e293b !important;
         color: #f8fafc !important;
         padding: 10px 16px !important;
         border-radius: 6px !important;
-        margin-bottom: 8px !important;
     }
     </style>
-    
-    <div class="custom-footer">
-        Powered by Aqsa Rana
-    </div>
+    <div class="custom-footer">Powered by Aqsa Rana</div>
 """, unsafe_allow_html=True)
 
-# Initialize LLM & Tool
-@st.cache_resource
-@st.cache_resource
-def load_assistant():
-    # Retrieve secrets safely from either Streamlit Cloud or local .env
-    groq_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-    tavily_key = st.secrets.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY")
-
-    if not groq_key:
-        st.error("❌ GROQ_API_KEY is missing!")
-    if not tavily_key:
-        st.error("❌ TAVILY_API_KEY is missing!")
-
-    llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        temperature=0,
-        groq_api_key=groq_key
-    )
-    search_tool = TavilySearch(max_results=3)
-    return llm.bind_tools([search_tool]), search_tool, llm
-
-# ==========================================
-# JSON PERSISTENCE HELPERS
-# ==========================================
+# Persistence Helpers
 HISTORY_FILE = "chat_history.json"
 
 def load_history_from_json():
@@ -171,11 +137,9 @@ def save_history_to_json():
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(st.session_state.sessions, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        st.error(f"Failed to save history to file: {e}")
+        st.error(f"Failed to save history: {e}")
 
-# ==========================================
-# MULTI-SESSION STATE MANAGEMENT
-# ==========================================
+# Session Management
 if "sessions" not in st.session_state:
     st.session_state.sessions = load_history_from_json()
 
@@ -194,15 +158,12 @@ def start_new_chat():
     }
     save_history_to_json()
 
-# Ensure at least one active chat session exists
 if not st.session_state.active_session_id or st.session_state.active_session_id not in st.session_state.sessions:
     start_new_chat()
 
 current_session = st.session_state.sessions[st.session_state.active_session_id]
 
-# ==========================================
-# SIDEBAR (CLEAN STYLE HISTORY)
-# ==========================================
+# Sidebar UI
 with st.sidebar:
     st.markdown("### 🤖 Smart Assistant")
     st.markdown("### 🎛️ Research Settings")
@@ -221,7 +182,6 @@ with st.sidebar:
     )
     st.divider()
 
-    # New Chat Button
     if st.button("➕ New chat", use_container_width=True, type="primary"):
         start_new_chat()
         st.rerun()
@@ -229,7 +189,6 @@ with st.sidebar:
     st.divider()
     st.caption("Recent Searches")
     
-    # Scrollable container for recent chats
     history_container = st.container(height=320, border=False)
     
     with history_container:
@@ -238,7 +197,6 @@ with st.sidebar:
             display_title = title if len(title) <= 18 else title[:16] + "..."
             is_active = (sess_id == st.session_state.active_session_id)
             
-            # Row layout: 80% Title button, 20% Options menu (⚙️)
             col_title, col_menu = st.columns([0.8, 0.2])
             
             with col_title:
@@ -249,7 +207,6 @@ with st.sidebar:
             with col_menu:
                 with st.popover("⚙️"):
                     st.markdown("**Options**")
-                    # 1. Edit Title
                     new_name = st.text_input("Rename chat", value=title, key=f"edit_in_{sess_id}")
                     if st.button("Save Title", key=f"save_{sess_id}", use_container_width=True):
                         st.session_state.sessions[sess_id]["title"] = new_name
@@ -258,24 +215,24 @@ with st.sidebar:
                     
                     st.divider()
 
-                    # AI Answers Export
                     ai_responses = [m["content"] for m in sess_data["messages"] if m["role"] == "assistant"]
                     clean_synthesis = "\n\n".join(ai_responses) if ai_responses else "No research content available."
 
-                    # 2. Executive Research Brief PDF
-                    exec_pdf = generate_pdf_report(title, clean_synthesis)
-                    st.download_button(
-                        label="📄 Export PDF",
-                        data=exec_pdf,
-                        file_name=f"Research_Brief_{title.replace(' ', '_')[:12]}.pdf",
-                        mime="application/pdf",
-                        key=f"pdf_exec_{sess_id}",
-                        use_container_width=True
-                    )
+                    try:
+                        exec_pdf = generate_pdf_report(title, clean_synthesis)
+                        st.download_button(
+                            label="📄 Export PDF",
+                            data=exec_pdf,
+                            file_name=f"Research_Brief_{title.replace(' ', '_')[:12]}.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_exec_{sess_id}",
+                            use_container_width=True
+                        )
+                    except Exception as pdf_err:
+                        st.error("Could not render PDF preview.")
                     
                     st.divider()
                     
-                    # 3. Delete Specific Chat
                     if st.button("🗑️ Delete", key=f"del_{sess_id}", type="primary", use_container_width=True):
                         del st.session_state.sessions[sess_id]
                         if st.session_state.active_session_id == sess_id:
@@ -289,7 +246,6 @@ with st.sidebar:
 
     st.divider()
     
-    # Clear All History Button
     if st.button("🗑️ Clear All History", use_container_width=True):
         st.session_state.sessions = {}
         st.session_state.active_session_id = None
@@ -297,20 +253,16 @@ with st.sidebar:
         start_new_chat()
         st.rerun()
 
-# ==========================================
-# MAIN CHAT INTERFACE
-# ==========================================
+# Main Chat
 st.title("🧠 Smart Research Assistant")
-st.caption("Powered by Llama 3.3 (Groq) & Tavily Search API")
+st.caption("Powered by Groq & Tavily Search API")
 
-# Display current conversation
 messages = current_session["messages"]
 
 for idx, message in enumerate(messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         
-        # Show dynamic re-translation trigger under the LAST assistant message
         if message["role"] == "assistant" and idx == len(messages) - 1:
             st.markdown("---")
             if st.button(f"🌐 Regenerate in {target_language}", key=f"retrans_{idx}"):
@@ -319,18 +271,15 @@ for idx, message in enumerate(messages):
                     st.session_state.triggered_query = user_prompts[-1]
                     st.rerun()
 
-# Handle retrigger from language action OR normal user typing
 retriggered_query = st.session_state.pop("triggered_query", None)
 user_input = st.chat_input("Ask your research question here...")
 
 query = retriggered_query or user_input
 
 if query:
-    # Set initial title from first query
     if current_session["title"] == "New Chat":
         current_session["title"] = query
 
-    # Append message if manually typed
     if not retriggered_query:
         current_session["messages"].append({"role": "user", "content": query})
         save_history_to_json()
@@ -340,37 +289,27 @@ if query:
     with st.chat_message("assistant"):
         with st.spinner(f"Synthesizing research in {target_language}..."):
             try:
-                # Dynamic depth instruction
                 if research_mode == "⚡ Quick Summary":
-                    depth_instruction = (
-                        "Provide a concise, direct summary. "
-                        "Focus strictly on essential facts and key takeaways."
-                    )
+                    depth_instruction = "Provide a concise summary highlighting essential facts."
                 else:
-                    depth_instruction = (
-                        "Provide an exhaustive, deep-dive research report. "
-                        "Structure thoroughly with clear headings, detailed breakdowns, "
-                        "pros/cons, and actionable next steps."
-                    )
+                    depth_instruction = "Provide an exhaustive research report with headings, breakdowns, and detailed context."
 
-                # System Prompt
                 system_content = f"""You are an elite Smart Research Assistant.
 
 CRITICAL WORKFLOW RULES:
-1. If web search is needed, execute the search tool first without generating body text.
-2. Once search results are received, synthesize your final findings ENTIRELY in {target_language}.
+1. If web search is needed, execute the search tool first.
+2. Synthesize findings ENTIRELY in {target_language}.
 3. {depth_instruction}
 
 FINAL OUTPUT FORMATTING:
-Start your final answer with a 3-bullet highlights section formatted EXACTLY as:
+Start your final answer with a 3-bullet highlights section formatted as:
 
 > 📊 **Key Stat / Highlight 1:** [Key insight or number]
 > 📊 **Key Stat / Highlight 2:** [Key insight or number]
 > 📊 **Key Stat / Highlight 3:** [Key insight or number]
 
-Followed by your main detailed research brief in {target_language}.
+Followed by your detailed research report.
 """
-                # Construct message history
                 langchain_history = [SystemMessage(content=system_content)]
 
                 for msg in current_session["messages"]:
@@ -383,7 +322,7 @@ Followed by your main detailed research brief in {target_language}.
                 
                 if hasattr(response, 'tool_calls') and response.tool_calls:
                     for tool_call in response.tool_calls:
-                        if tool_call["name"] == "tavily_search":
+                        if tool_call["name"] in ["tavily_search", "tavily_search_results_json"]:
                             tool_args = tool_call["args"]
                             search_query = tool_args.get("query", query)
                             

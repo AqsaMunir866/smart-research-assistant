@@ -1,4 +1,5 @@
 import io
+import html
 import re
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -9,10 +10,33 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.platypus.flowables import HRFlowable
 
 
+def clean_text_for_reportlab(text: str) -> str:
+    if not text:
+        return ""
+    
+    # 1. Unescape existing HTML entities
+    text = html.unescape(text)
+
+    # 2. Extract and temporarily preserve Markdown bold & italic text
+    text = re.sub(r'\*\*(.*?)\*\*', r'___BOLD_\1_BOLD___', text)
+    text = re.sub(r'\*(.*?)\*', r'___ITALIC_\1_ITALIC___', text)
+
+    # 3. Strip ALL raw HTML / XML tags from text
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # 4. Escape remaining XML reserved characters (&, <, >)
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # 5. Restore bold & italic tags in ReportLab-safe XML format
+    text = re.sub(r'___BOLD_(.*?)_BOLD___', r'<b>\1</b>', text)
+    text = re.sub(r'___ITALIC_(.*?)_ITALIC___', r'<i>\1</i>', text)
+    
+    return text
+
+
 def generate_pdf_report(title: str, content: str) -> bytes:
     buffer = io.BytesIO()
 
-    # Document setup (0.75-inch margins)
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
@@ -24,7 +48,6 @@ def generate_pdf_report(title: str, content: str) -> bytes:
 
     styles = getSampleStyleSheet()
 
-    # 1. Center-Aligned Header Styles
     doc_title_style = ParagraphStyle(
         'ExecutiveTitle',
         parent=styles['Heading1'],
@@ -45,7 +68,6 @@ def generate_pdf_report(title: str, content: str) -> bytes:
         spaceAfter=14
     )
 
-    # 2. Body Section Styles
     h2_style = ParagraphStyle(
         'SectionHeading',
         parent=styles['Heading2'],
@@ -76,42 +98,35 @@ def generate_pdf_report(title: str, content: str) -> bytes:
 
     story = []
 
-    # 3. Centered Header Block
     date_str = datetime.now().strftime("%B %d, %Y")
-    
-    # Auto-titlecase the main title for presentation
-    formatted_title = title.title()
+    formatted_title = clean_text_for_reportlab(title.title())
     
     story.append(Paragraph(f"<b>{formatted_title}</b>", doc_title_style))
-    story.append(Paragraph(f"<b>Executive Research Brief</b> • Generated on {date_str}", doc_meta_style))
+    story.append(Paragraph(f"<b>Executive Research Brief</b> &bull; Generated on {date_str}", doc_meta_style))
     story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#2563EB"), spaceAfter=16))
 
-    # 4. Markdown Parsing
     lines = content.split('\n')
     for line in lines:
         line_str = line.strip()
         if not line_str:
             continue
 
-        # Format bold **text** and italic *text*
-        formatted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line_str)
-        formatted = re.sub(r'\*(.*?)\*', r'<i>\1</i>', formatted)
+        formatted = clean_text_for_reportlab(line_str)
 
-        # Headings
         if formatted.startswith('# '):
             story.append(Paragraph(formatted[2:], doc_title_style))
         elif formatted.startswith('## ') or formatted.startswith('### '):
             clean_head = re.sub(r'^#+\s*', '', formatted)
             story.append(Paragraph(clean_head, h2_style))
-        # Bullet Points
         elif formatted.startswith('* ') or formatted.startswith('- ') or re.match(r'^\d+\.\s', formatted):
             clean_bullet = re.sub(r'^(\*|-|\d+\.)\s*', '', formatted)
-            story.append(Paragraph(f"• {clean_bullet}", bullet_style))
-        # Paragraphs
+            story.append(Paragraph(f"&bull; {clean_bullet}", bullet_style))
+        elif formatted.startswith('&gt; '):
+            clean_quote = formatted[5:]
+            story.append(Paragraph(f"<i>{clean_quote}</i>", bullet_style))
         else:
             story.append(Paragraph(formatted, body_style))
 
-    # Build PDF
     doc.build(story)
     pdf_bytes = buffer.getvalue()
     buffer.close()
