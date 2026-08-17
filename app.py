@@ -130,13 +130,6 @@ st.markdown("""
         font-size: 13px !important;
         min-height: 32px !important;
     }
-    blockquote {
-        border-left: 4px solid #2563EB !important;
-        background-color: #1e293b !important;
-        color: #f8fafc !important;
-        padding: 10px 16px !important;
-        border-radius: 6px !important;
-    }
     </style>
     <div class="custom-footer">Powered by Aqsa Rana</div>
 """, unsafe_allow_html=True)
@@ -331,13 +324,7 @@ CRITICAL WORKFLOW RULES:
 6. {depth_instruction}
 
 FINAL OUTPUT FORMATTING:
-Start your final answer with a 3-bullet highlights section formatted as:
-
-> 📊 **Key Stat / Highlight 1:** [Key insight or number]
-> 📊 **Key Stat / Highlight 2:** [Key insight or number]
-> 📊 **Key Stat / Highlight 3:** [Key insight or number]
-
-Followed by your detailed research report.
+Present your findings cleanly using standard headings, bold text, and bullet points. Keep introductory text minimal and jump straight into the research.
 """
                 langchain_history = [SystemMessage(content=system_content)]
 
@@ -363,6 +350,7 @@ Followed by your detailed research report.
                             final_prompt = (
                                 f"Search results: {tool_output}\n\n"
                                 f"Provide a comprehensive, professional answer in {target_language} based on the search results. "
+                                "Use clean Markdown with standard headings and bullet points. Do NOT use blockquotes (>), callout boxes, or 'Key Stat' callout blocks. "
                                 "Answer the current query directly without meta-commentary on previous unrelated topics or chat history."
                             )
                             synthesis_messages = langchain_history + [HumanMessage(content=final_prompt)]
