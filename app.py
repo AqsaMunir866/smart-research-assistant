@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import streamlit as st
 from dotenv import load_dotenv
@@ -12,6 +13,13 @@ from langchain_community.tools import TavilySearchResults
 
 # Import your PDF generator function
 from pdf_generator import generate_pdf_report
+
+# Helper function to strip internal reasoning/thinking tags (e.g., <think>...</think>)
+def clean_llm_response(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    return cleaned.strip()
 
 # Safe secret retrieval helper function
 def get_secret_key(key_name):
@@ -58,7 +66,7 @@ if tavily_key_env:
 # Page Configuration
 st.set_page_config(page_title="Smart Research Assistant", page_icon="🤖", layout="centered")
 
-# Custom CSS for Sleek Gemini-Style Sidebar & Footer
+# Custom CSS for Sleek Sidebar, Popover & Footer
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -74,6 +82,8 @@ st.markdown("""
         background-color: transparent;
     }
     [data-testid="stChatInput"] { bottom: 35px !important; }
+    
+    /* Sidebar Chat History Buttons */
     div[data-testid="stSidebar"] div.stButton > button {
         border: none !important;
         background-color: transparent !important;
@@ -102,12 +112,23 @@ st.markdown("""
         color: #8b949e !important;
         padding: 2px 6px !important;
     }
+    
+    /* Clean Fluid Popover Box */
     div[data-testid="stPopoverBody"] {
-        padding: 8px !important;
-        max-width: 180px !important;
-        min-width: 170px !important;
-        overflow: hidden !important;
+        padding: 12px !important;
         border-radius: 8px !important;
+    }
+    div[data-testid="stPopoverBody"] hr {
+        margin: 8px 0 !important;
+    }
+    div[data-testid="stPopoverBody"] .stTextInput input {
+        font-size: 13px !important;
+        padding: 6px 10px !important;
+    }
+    div[data-testid="stPopoverBody"] .stButton > button {
+        padding: 4px 8px !important;
+        font-size: 13px !important;
+        min-height: 32px !important;
     }
     blockquote {
         border-left: 4px solid #2563EB !important;
@@ -203,36 +224,41 @@ with st.sidebar:
                 if st.button(f"💬 {display_title}", key=f"btn_{sess_id}", use_container_width=True, disabled=is_active):
                     st.session_state.active_session_id = sess_id
                     st.rerun()
-            
+                    
             with col_menu:
                 with st.popover("⚙️"):
-                    st.markdown("**Options**")
-                    new_name = st.text_input("Rename chat", value=title, key=f"edit_in_{sess_id}")
-                    if st.button("Save Title", key=f"save_{sess_id}", use_container_width=True):
+                    # Rename Input & Save
+                    new_name = st.text_input("Rename", value=title, key=f"edit_in_{sess_id}", label_visibility="collapsed")
+                    
+                    if st.button("💾 Save Name", key=f"save_{sess_id}", use_container_width=True):
                         st.session_state.sessions[sess_id]["title"] = new_name
                         save_history_to_json()
                         st.rerun()
-                    
+
                     st.divider()
 
+                    # Export PDF Button
                     ai_responses = [m["content"] for m in sess_data["messages"] if m["role"] == "assistant"]
-                    clean_synthesis = "\n\n".join(ai_responses) if ai_responses else "No research content available."
+                    if ai_responses:
+                        try:
+                            clean_synthesis = "\n\n".join(ai_responses)
+                            exec_pdf = generate_pdf_report(title, clean_synthesis)
+                            st.download_button(
+                                label="📄 PDF Report",
+                                data=exec_pdf,
+                                file_name=f"Report_{sess_id}.pdf",
+                                mime="application/pdf",
+                                key=f"pdf_exec_{sess_id}",
+                                use_container_width=True
+                            )
+                        except Exception:
+                            st.caption("⚠️ PDF unavailable")
+                    else:
+                        st.caption("No content to export")
 
-                    try:
-                        exec_pdf = generate_pdf_report(title, clean_synthesis)
-                        st.download_button(
-                            label="📄 Export PDF",
-                            data=exec_pdf,
-                            file_name=f"Research_Brief_{title.replace(' ', '_')[:12]}.pdf",
-                            mime="application/pdf",
-                            key=f"pdf_exec_{sess_id}",
-                            use_container_width=True
-                        )
-                    except Exception as pdf_err:
-                        st.error("Could not render PDF preview.")
-                    
                     st.divider()
-                    
+
+                    # Delete Chat Button
                     if st.button("🗑️ Delete", key=f"del_{sess_id}", type="primary", use_container_width=True):
                         del st.session_state.sessions[sess_id]
                         if st.session_state.active_session_id == sess_id:
@@ -297,9 +323,12 @@ if query:
                 system_content = f"""You are an elite Smart Research Assistant.
 
 CRITICAL WORKFLOW RULES:
-1. If web search is needed, execute the search tool first.
-2. Synthesize findings ENTIRELY in {target_language}.
-3. {depth_instruction}
+1. Focus directly on answering the user's latest query accurately.
+2. Adapt seamlessly if the user switches topics. Do NOT mention, comment on, or analyze prior topic switches or previous conversation shifts.
+3. NEVER output internal thoughts, reasoning blocks, or <think> tags.
+4. If web search is needed, execute the search tool first.
+5. Synthesize findings ENTIRELY in {target_language}.
+6. {depth_instruction}
 
 FINAL OUTPUT FORMATTING:
 Start your final answer with a 3-bullet highlights section formatted as:
@@ -312,7 +341,10 @@ Followed by your detailed research report.
 """
                 langchain_history = [SystemMessage(content=system_content)]
 
-                for msg in current_session["messages"]:
+                # Only pass the last 8 messages (4 turns) to avoid context pollution on topic shifts
+                recent_messages = current_session["messages"][-8:]
+
+                for msg in recent_messages:
                     if msg["role"] == "user":
                         langchain_history.append(HumanMessage(content=msg["content"]))
                     elif msg["role"] == "assistant":
@@ -330,13 +362,14 @@ Followed by your detailed research report.
                             
                             final_prompt = (
                                 f"Search results: {tool_output}\n\n"
-                                f"Provide a comprehensive, professional answer in {target_language} based on the search results and conversation history."
+                                f"Provide a comprehensive, professional answer in {target_language} based on the search results. "
+                                "Answer the current query directly without meta-commentary on previous unrelated topics or chat history."
                             )
                             synthesis_messages = langchain_history + [HumanMessage(content=final_prompt)]
                             final_response = llm.invoke(synthesis_messages)
-                            answer = final_response.content
+                            answer = clean_llm_response(final_response.content)
                 else:
-                    answer = response.content
+                    answer = clean_llm_response(response.content)
                 
                 st.markdown(answer)
                 current_session["messages"].append({"role": "assistant", "content": answer})
