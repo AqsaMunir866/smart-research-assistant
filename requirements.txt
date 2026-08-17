@@ -1,4 +1,6 @@
 streamlit
+python-dotenv
 langchain-groq
 langchain-tavily
-python-dotenv
+langchain-core
+reportlab
