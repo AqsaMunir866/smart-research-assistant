@@ -41,7 +41,7 @@ def get_assistant_components():
         st.error("⚠️ API Keys are missing! Please check your Streamlit Secrets or local .env file.")
 
     llm = ChatGroq(
-        model="qwen/qwen3.6-27b",
+        model="qwen/qwen3.8-27b",
         temperature=0,
         groq_api_key=groq_key
     )
